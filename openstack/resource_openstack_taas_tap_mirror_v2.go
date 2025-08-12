@@ -2,16 +2,12 @@ package openstack
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"net/http"
-	"time"
 
-	"github.com/gophercloud/gophercloud/v2"
-	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/vpnaas/tapmirrors"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/taas/tapmirrors"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceTapMirrorV2() *schema.Resource {
@@ -22,12 +18,6 @@ func resourceTapMirrorV2() *schema.Resource {
 		DeleteContext: resourceTapMirrorV2Delete,
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
-		},
-
-		Timeouts: &schema.ResourceTimeout{
-			Create: schema.DefaultTimeout(10 * time.Minute),
-			Update: schema.DefaultTimeout(10 * time.Minute),
-			Delete: schema.DefaultTimeout(10 * time.Minute),
 		},
 
 		Schema: map[string]*schema.Schema{
@@ -53,37 +43,40 @@ func resourceTapMirrorV2() *schema.Resource {
 			},
 			"port_id": {
 				Type:     schema.TypeString,
-				Computed: true,
-				Optional: true,
+				Required: true,
 				ForceNew: true,
 			},
 			"mirror_type": {
 				Type:     schema.TypeString,
-				Optional: true,
+				Required: true,
 				ForceNew: true,
 				ValidateFunc: validation.StringInSlice([]string{
-					tapmirrors.MirrorTypeErspanv1, tapmirrors.MirrorTypeGre,
+					"erspanv1", "gre",
 				}, false),
 			},
 			"remote_ip": {
 				Type:     schema.TypeString,
-				Optional: true,
+				Required: true,
 				ForceNew: true,
 			},
 			"directions": {
-				Type:     schema.TypeMap,
-				Optional: true,
+				Type:     schema.TypeList,
+				Required: true,
 				ForceNew: true,
-				Elem: map[string]*schema.Schema{
-					"in": {
-						Type: schema.TypeInt,
-						Optional: true,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"in": {
+							Type:         schema.TypeInt,
+							Optional:     true,
+							AtLeastOneOf: []string{"directions.0.out"},
+						},
+						"out": {
+							Type:     schema.TypeInt,
+							Optional: true,
+						},
 					},
-					"out": {
-						Type: schema.TypeInt,
-						Optional: true,
-					},
-				}
+				},
 			},
 		},
 	}
@@ -97,52 +90,37 @@ func resourceTapMirrorV2Create(ctx context.Context, d *schema.ResourceData, meta
 		return diag.Errorf("Error creating OpenStack networking client: %s", err)
 	}
 
-	var createOpts TapMirrors.CreateOptsBuilder
+	var createOpts tapmirrors.CreateOptsBuilder
 
-	endpointType := resourceTapMirrorV2EndpointType(d.Get("type").(string))
-	endpoints := expandToStringSlice(d.Get("endpoints").(*schema.Set).List())
+	mirrorType := resourceTapMirrorV2MirrorType(d.Get("mirror_type").(string))
+	directions := resourceTapMirrorV2Directions(d.Get("directions").([]any))
 
-	createOpts = TapMirrorCreateOpts{
-		TapMirrors.CreateOpts{
-			Name:        d.Get("name").(string),
-			Description: d.Get("description").(string),
-			TenantID:    d.Get("tenant_id").(string),
-			Endpoints:   endpoints,
-			Type:        endpointType,
-		},
-		MapValueSpecs(d),
+	createOpts = tapmirrors.CreateOpts{
+		Name:        d.Get("name").(string),
+		Description: d.Get("description").(string),
+		TenantID:    d.Get("tenant_id").(string),
+		PortID:      d.Get("port_id").(string),
+		MirrorType:  mirrorType,
+		RemoteIP:    d.Get("remote_ip").(string),
+		Directions:  directions,
 	}
 
-	log.Printf("[DEBUG] Create group: %#v", createOpts)
+	log.Printf("[DEBUG] Create tapMirror: %#v", createOpts)
 
-	group, err := TapMirrors.Create(ctx, networkingClient, createOpts).Extract()
+	tapMirror, err := tapmirrors.Create(ctx, networkingClient, createOpts).Extract()
 	if err != nil {
 		return diag.FromErr(err)
 	}
 
-	stateConf := &retry.StateChangeConf{
-		Pending:    []string{"PENDING_CREATE"},
-		Target:     []string{"ACTIVE"},
-		Refresh:    waitForTapMirrorCreation(ctx, networkingClient, group.ID),
-		Timeout:    d.Timeout(schema.TimeoutCreate),
-		Delay:      0,
-		MinTimeout: 2 * time.Second,
-	}
+	log.Printf("[DEBUG] TapMirror created: %#v", tapMirror)
 
-	_, err = stateConf.WaitForStateContext(ctx)
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	log.Printf("[DEBUG] TapMirror created: %#v", group)
-
-	d.SetId(group.ID)
+	d.SetId(tapMirror.ID)
 
 	return resourceTapMirrorV2Read(ctx, d, meta)
 }
 
 func resourceTapMirrorV2Read(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	log.Printf("[DEBUG] Retrieve information about group: %s", d.Id())
+	log.Printf("[DEBUG] Retrieve information about tapMirror: %s", d.Id())
 
 	config := meta.(*Config)
 
@@ -151,164 +129,135 @@ func resourceTapMirrorV2Read(ctx context.Context, d *schema.ResourceData, meta a
 		return diag.Errorf("Error creating OpenStack networking client: %s", err)
 	}
 
-	group, err := TapMirrors.Get(ctx, networkingClient, d.Id()).Extract()
+	tapMirror, err := tapmirrors.Get(ctx, networkingClient, d.Id()).Extract()
 	if err != nil {
-		return diag.FromErr(CheckDeleted(d, err, "group"))
+		return diag.FromErr(CheckDeleted(d, err, "tapMirror"))
 	}
 
-	log.Printf("[DEBUG] Read OpenStack Endpoint TapMirror %s: %#v", d.Id(), group)
+	log.Printf("[DEBUG] Read OpenStack Endpoint TapMirror %s: %#v", d.Id(), tapMirror)
 
-	d.Set("name", group.Name)
-	d.Set("description", group.Description)
-	d.Set("tenant_id", group.TenantID)
-	d.Set("type", group.Type)
-	d.Set("endpoints", group.Endpoints)
-	d.Set("region", GetRegion(d, config))
+	d.Set("name", tapMirror.Name)
+	d.Set("description", tapMirror.Description)
+	d.Set("tenant_id", tapMirror.TenantID)
+	d.Set("project_id", tapMirror.ProjectID)
+	d.Set("port_id", tapMirror.PortID)
+	d.Set("mirror_type", tapMirror.MirrorType)
+	d.Set("remote_ip", tapMirror.RemoteIP)
+	d.Set("directions", []any{tapMirror.Directions})
 
 	return nil
 }
 
 func resourceTapMirrorV2Update(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	config := meta.(*Config)
+	// 	config := meta.(*Config)
 
-	networkingClient, err := config.NetworkingV2Client(ctx, GetRegion(d, config))
-	if err != nil {
-		return diag.Errorf("Error creating OpenStack networking client: %s", err)
-	}
+	// 	networkingClient, err := config.NetworkingV2Client(ctx, GetRegion(d, config))
+	// 	if err != nil {
+	// 		return diag.Errorf("Error creating OpenStack networking client: %s", err)
+	// 	}
 
-	opts := TapMirrors.UpdateOpts{}
+	// 	opts := TapMirrors.UpdateOpts{}
 
-	var hasChange bool
+	// 	var hasChange bool
 
-	if d.HasChange("name") {
-		name := d.Get("name").(string)
-		opts.Name = &name
-		hasChange = true
-	}
+	// 	if d.HasChange("name") {
+	// 		name := d.Get("name").(string)
+	// 		opts.Name = &name
+	// 		hasChange = true
+	// 	}
 
-	if d.HasChange("description") {
-		description := d.Get("description").(string)
-		opts.Description = &description
-		hasChange = true
-	}
+	// 	if d.HasChange("description") {
+	// 		description := d.Get("description").(string)
+	// 		opts.Description = &description
+	// 		hasChange = true
+	// 	}
 
-	var updateOpts TapMirrors.UpdateOptsBuilder = opts
+	// 	var updateOpts TapMirrors.UpdateOptsBuilder = opts
 
-	log.Printf("[DEBUG] Updating endpoint group with id %s: %#v", d.Id(), updateOpts)
+	// 	log.Printf("[DEBUG] Updating endpoint tapMirror with id %s: %#v", d.Id(), updateOpts)
 
-	if hasChange {
-		group, err := TapMirrors.Update(ctx, networkingClient, d.Id(), updateOpts).Extract()
-		if err != nil {
-			return diag.FromErr(err)
-		}
+	// 	if hasChange {
+	// 		tapMirror, err := TapMirrors.Update(ctx, networkingClient, d.Id(), updateOpts).Extract()
+	// 		if err != nil {
+	// 			return diag.FromErr(err)
+	// 		}
 
-		stateConf := &retry.StateChangeConf{
-			Pending:    []string{"PENDING_UPDATE"},
-			Target:     []string{"UPDATED"},
-			Refresh:    waitForTapMirrorUpdate(ctx, networkingClient, group.ID),
-			Timeout:    d.Timeout(schema.TimeoutCreate),
-			Delay:      0,
-			MinTimeout: 2 * time.Second,
-		}
+	// 		stateConf := &retry.StateChangeConf{
+	// 			Pending:    []string{"PENDING_UPDATE"},
+	// 			Target:     []string{"UPDATED"},
+	// 			Refresh:    waitForTapMirrorUpdate(ctx, networkingClient, tapMirror.ID),
+	// 			Timeout:    d.Timeout(schema.TimeoutCreate),
+	// 			Delay:      0,
+	// 			MinTimeout: 2 * time.Second,
+	// 		}
 
-		_, err = stateConf.WaitForStateContext(ctx)
-		if err != nil {
-			return diag.FromErr(err)
-		}
+	// 		_, err = stateConf.WaitForStateContext(ctx)
+	// 		if err != nil {
+	// 			return diag.FromErr(err)
+	// 		}
 
-		log.Printf("[DEBUG] Updated group with id %s", d.Id())
-	}
+	// 		log.Printf("[DEBUG] Updated tapMirror with id %s", d.Id())
+	// 	}
 
-	return resourceTapMirrorV2Read(ctx, d, meta)
+	// 	return resourceTapMirrorV2Read(ctx, d, meta)
+	panic(1)
 }
 
 func resourceTapMirrorV2Delete(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
-	log.Printf("[DEBUG] Destroy group: %s", d.Id())
+	// 	log.Printf("[DEBUG] Destroy tapMirror: %s", d.Id())
 
-	config := meta.(*Config)
+	// 	config := meta.(*Config)
 
-	networkingClient, err := config.NetworkingV2Client(ctx, GetRegion(d, config))
-	if err != nil {
-		return diag.Errorf("Error creating OpenStack networking client: %s", err)
-	}
+	// 	networkingClient, err := config.NetworkingV2Client(ctx, GetRegion(d, config))
+	// 	if err != nil {
+	// 		return diag.Errorf("Error creating OpenStack networking client: %s", err)
+	// 	}
 
-	err = TapMirrors.Delete(ctx, networkingClient, d.Id()).Err
-	if err != nil {
-		return diag.FromErr(err)
-	}
+	// 	err = TapMirrors.Delete(ctx, networkingClient, d.Id()).Err
+	// 	if err != nil {
+	// 		return diag.FromErr(err)
+	// 	}
 
-	stateConf := &retry.StateChangeConf{
-		Pending:    []string{"DELETING"},
-		Target:     []string{"DELETED"},
-		Refresh:    waitForTapMirrorDeletion(ctx, networkingClient, d.Id()),
-		Timeout:    d.Timeout(schema.TimeoutDelete),
-		Delay:      0,
-		MinTimeout: 2 * time.Second,
-	}
+	// 	stateConf := &retry.StateChangeConf{
+	// 		Pending:    []string{"DELETING"},
+	// 		Target:     []string{"DELETED"},
+	// 		Refresh:    waitForTapMirrorDeletion(ctx, networkingClient, d.Id()),
+	// 		Timeout:    d.Timeout(schema.TimeoutDelete),
+	// 		Delay:      0,
+	// 		MinTimeout: 2 * time.Second,
+	// 	}
 
-	_, err = stateConf.WaitForStateContext(ctx)
+	// 	_, err = stateConf.WaitForStateContext(ctx)
 
-	return diag.FromErr(err)
+	// return diag.FromErr(err)
+	panic(1)
 }
 
-func waitForTapMirrorDeletion(ctx context.Context, networkingClient *gophercloud.ServiceClient, id string) retry.StateRefreshFunc {
-	return func() (any, string, error) {
-		group, err := TapMirrors.Get(ctx, networkingClient, id).Extract()
-		log.Printf("[DEBUG] Got group %s => %#v", id, group)
+func resourceTapMirrorV2MirrorType(mirrorType string) tapmirrors.MirrorType {
+	var result tapmirrors.MirrorType
 
-		if err != nil {
-			if gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
-				log.Printf("[DEBUG] TapMirror %s is actually deleted", id)
+	switch mirrorType {
+	case "erspanv1":
+		result = tapmirrors.MirrorTypeErspanv1
+	case "gre":
+		result = tapmirrors.MirrorTypeGre
+	}
 
-				return "", "DELETED", nil
-			}
+	return result
+}
 
-			return nil, "", fmt.Errorf("Unexpected error: %w", err)
+func resourceTapMirrorV2Directions(directions []any) tapmirrors.Directions {
+	var result tapmirrors.Directions
+
+	for _, raw := range directions {
+		binding := raw.(map[string]any)
+		if value, exists := binding["in"]; exists {
+			result.In = value.(int)
 		}
-
-		log.Printf("[DEBUG] TapMirror %s deletion is pending", id)
-
-		return group, "DELETING", nil
-	}
-}
-
-func waitForTapMirrorCreation(ctx context.Context, networkingClient *gophercloud.ServiceClient, id string) retry.StateRefreshFunc {
-	return func() (any, string, error) {
-		group, err := TapMirrors.Get(ctx, networkingClient, id).Extract()
-		if err != nil {
-			return "", "PENDING_CREATE", nil
+		if value, exists := binding["out"]; exists {
+			result.Out = value.(int)
 		}
-
-		return group, "ACTIVE", nil
-	}
-}
-
-func waitForTapMirrorUpdate(ctx context.Context, networkingClient *gophercloud.ServiceClient, id string) retry.StateRefreshFunc {
-	return func() (any, string, error) {
-		group, err := TapMirrors.Get(ctx, networkingClient, id).Extract()
-		if err != nil {
-			return "", "PENDING_UPDATE", nil
-		}
-
-		return group, "UPDATED", nil
-	}
-}
-
-func resourceTapMirrorV2EndpointType(epType string) TapMirrors.EndpointType {
-	var et TapMirrors.EndpointType
-
-	switch epType {
-	case "subnet":
-		et = TapMirrors.TypeSubnet
-	case "cidr":
-		et = TapMirrors.TypeCIDR
-	case "vlan":
-		et = TapMirrors.TypeVLAN
-	case "router":
-		et = TapMirrors.TypeRouter
-	case "network":
-		et = TapMirrors.TypeNetwork
 	}
 
-	return et
+	return result
 }
