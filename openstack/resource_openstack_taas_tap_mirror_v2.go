@@ -37,8 +37,6 @@ func resourceTapMirrorV2() *schema.Resource {
 			},
 			"project_id": {
 				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
 				Computed: true,
 			},
 			"port_id": {
