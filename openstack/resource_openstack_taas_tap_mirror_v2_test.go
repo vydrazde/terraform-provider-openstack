@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
-func TestAccTapMirrorTaaSV2_basic(t *testing.T) {
+func TestAccTaasTapMirrorV2_basic(t *testing.T) {
 	var tapMirror tapmirrors.TapMirror
 
 	resource.Test(t, resource.TestCase{
@@ -31,7 +31,7 @@ func TestAccTapMirrorTaaSV2_basic(t *testing.T) {
 					testAccCheckTapMirrorV2Exists(t.Context(),
 						"openstack_taas_tap_mirror_v2.tap_mirror_1", &tapMirror),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "name", "tap_mirror_1"),
-					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "description", "description"),
+					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "description", "desc"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "mirror_type", "erspanv1"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "directions.0.in", "1000"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "directions.0.out", "1001"),
@@ -41,7 +41,7 @@ func TestAccTapMirrorTaaSV2_basic(t *testing.T) {
 	})
 }
 
-func TestAccTapMirrorTaaSV2_update(t *testing.T) {
+func TestAccTaasTapMirrorV2_update(t *testing.T) {
 	var tapMirror tapmirrors.TapMirror
 
 	resource.Test(t, resource.TestCase{
@@ -59,7 +59,7 @@ func TestAccTapMirrorTaaSV2_update(t *testing.T) {
 					testAccCheckTapMirrorV2Exists(t.Context(),
 						"openstack_taas_tap_mirror_v2.tap_mirror_1", &tapMirror),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "name", "tap_mirror_1"),
-					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "type", "description"),
+					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "description", "desc"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "mirror_type", "erspanv1"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "directions.0.in", "1000"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "directions.0.out", "1001"),
@@ -71,7 +71,7 @@ func TestAccTapMirrorTaaSV2_update(t *testing.T) {
 					testAccCheckTapMirrorV2Exists(t.Context(),
 						"openstack_taas_tap_mirror_v2.tap_mirror_1", &tapMirror),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "name", "updated tap_mirror_1"),
-					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "type", "updated description"),
+					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "description", "updated desc"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "mirror_type", "erspanv1"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "directions.0.in", "1000"),
 					resource.TestCheckResourceAttr("openstack_taas_tap_mirror_v2.tap_mirror_1", "directions.0.out", "1001"),

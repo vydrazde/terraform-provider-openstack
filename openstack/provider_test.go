@@ -227,7 +227,7 @@ func testAccPreCheckPortForwarding(t *testing.T) {
 func testAccPreCheckTaas(t *testing.T) {
 	testAccPreCheckRequiredEnvVars(t)
 
-	if osTaasEnvironment == "" {
+	if osTaaSEnvironment == "" {
 		t.Skip("This environment does not support 'taas' extension tests")
 	}
 }
