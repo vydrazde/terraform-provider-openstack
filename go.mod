@@ -16,9 +16,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
-replace github.com/gophercloud/gophercloud/v2 => /home/zdenek/pers/gophercloud
-
-
 require (
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/agext/levenshtein v1.2.3 // indirect
